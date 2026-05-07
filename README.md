@@ -325,9 +325,8 @@ Development of a Web Service for Posting and Searching Land Sale Listings with R
 
 - **Автор:** Николаев Александр Владиславович
 - **GitHub:** [@AleksandrVNikolaev](https://github.com/AleksandrVNikolaev)
-- **Канал связи:** через GitHub Issues этого репозитория
-
-Для вопросов по защите ВКР — через личный кабинет НИУ ВШЭ.
+- **Email:** aleksandr.v.nikolaev@gmail.com
+- **Телефон:** +7 (916) 478-20-00
 
 ---
 
