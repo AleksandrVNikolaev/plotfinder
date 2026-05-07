@@ -1,0 +1,130 @@
+# =====================================================
+# PlotFinder — .gitignore
+# Не отслеживаемые git-ом файлы и папки
+# =====================================================
+
+# ---------- Секреты и переменные окружения ----------
+# Никогда не коммитим .env с реальными ключами!
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+
+# Резервные копии .env
+.env.backup
+.env.bak
+.env.old
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+develop-eggs/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.manifest
+*.spec
+
+# ---------- Virtual Environments ----------
+venv/
+env/
+ENV/
+.venv/
+.virtualenv/
+
+# ---------- IDE и редакторы ----------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---------- Логи и кэш PlotFinder ----------
+# Кэш GeoJSON от NextGIS Toolbox — генерируется на сервере
+output/geojson/
+output/temp/
+*.log
+logs/
+
+# Временные PDF-файлы при анализе (удаляются после обработки)
+output/pdfs/
+output/uploads/
+temp/
+tmp/
+
+# ---------- Pytest и тесты ----------
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# ---------- Jupyter ----------
+.ipynb_checkpoints
+*.ipynb
+
+# ---------- mypy / type checking ----------
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# ---------- OS-специфичные ----------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ---------- Локальные тестовые данные ----------
+# Реальные кадастры, выписки и т.п. для локального тестирования
+test_data/local/
+test_data/private/
+*.tmp.json
+
+# ---------- Резервные копии и черновики ----------
+*.backup
+*.bak
+*.old
+*.orig
+*~
+draft/
+scratch/
+
+# ---------- Bubble.io экспорты ----------
+# Bubble сами по себе не хранятся, но если делаешь backup pages
+bubble_backup/
+*.bubbleexport
