@@ -1,0 +1,371 @@
+<!--
+  PlotFinder — HTML Map Element для Bubble.io
+  ============================================
+
+  Этот файл представляет содержимое HTML-элемента на странице "index"
+  фронтенда PlotFinder в Bubble.io. Реализует интерактивную карту
+  земельных участков на базе Leaflet 1.9.4.
+
+  ВОЗМОЖНОСТИ:
+  - Карта с двумя слоями: спутник Esri World Imagery + OSM
+  - Управление зумом колесом мыши только при удержании Shift (UX-защита от случайного зума)
+  - Инструменты рисования (полигон, маркер, круг, прямоугольник) с автоматическим расчётом площади
+  - Построение маршрутов между маркерами через OSRM
+  - Загрузка GeoJSON-полигонов земельных участков из Bubble Data API
+  - Popup с полным набором кадастровых полей при клике на участок
+
+  ИСТОЧНИК ДАННЫХ:
+  Карта получает участки через GET-запрос к Bubble Data API:
+    https://aleksandrvnikolaev-22756.bubbleapps.io/api/1.1/obj/plot
+
+  Каждый Plot (Data Type) содержит поле `geojson` с геометрией участка,
+  которая ранее была получена backend'ом через FastAPI endpoint
+  /api/rosreestr2coord и сохранена в Bubble.
+
+  СТЕК БИБЛИОТЕК (через unpkg CDN):
+  - leaflet 1.9.4
+  - leaflet-draw 1.0.4
+  - leaflet-routing-machine 3.2.12
+  - leaflet-geometryutil (для расчёта площадей в м²)
+
+  ЦЕНТР КАРТЫ ПО УМОЛЧАНИЮ: 54.818, 20.0209 (Калининград), zoom 10
+
+  Лицензия: MIT (см. LICENSE в корне репозитория)
+-->
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css"/>
+    <style>
+        #map {
+            height: 400px;
+            width: 100%;
+            position: relative;
+        }
+
+        #zoom-tip {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            top: 30px;
+            z-index: 9999;
+            background: #f9e86e;
+            color: #222;
+            font-size: 18px;
+            font-weight: 600;
+            padding: 10px 24px;
+            border-radius: 12px;
+            border: 2px solid #d1ad36;
+            box-shadow: 0 2px 12px rgba(130,110,30,.17);
+            display: none;
+            pointer-events: none;
+            text-align: center;
+        }
+
+        .routing-panel {
+            position: absolute;
+            right: 20px;
+            top: 20px;
+            z-index: 10001;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.11);
+            padding: 10px 16px;
+        }
+
+        .routing-panel select,
+        .routing-panel button {
+            font-size: 14px;
+            margin-left: 5px;
+        }
+
+        body {
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+<div id="map">
+    <div id="zoom-tip">Для приближения карты удерживайте Shift и прокрутите колесо мыши</div>
+</div>
+
+<div class="routing-panel">
+    <span>Построить маршрут:</span>
+    <select id="routeFrom"></select>
+    <select id="routeTo"></select>
+    <button id="buildRoute">Go</button>
+    <button id="clearRoute">✖</button>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="https://unpkg.com/leaflet-geometryutil"></script>
+<script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors',
+        referrerPolicy: 'strict-origin-when-cross-origin'
+    });
+
+    var esri = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        {
+            maxZoom: 19,
+            attribution: '&copy; Esri'
+        }
+    );
+
+    var map = L.map('map', {
+        layers: [esri],
+        scrollWheelZoom: false
+    }).setView([54.818, 20.0209], 10);
+
+    var zoomTip = document.getElementById('zoom-tip');
+    var showTipTimer;
+
+    map.getContainer().addEventListener('wheel', function (e) {
+        if (e.shiftKey) {
+            zoomTip.style.display = 'none';
+            map.scrollWheelZoom.enable();
+        } else {
+            map.scrollWheelZoom.disable();
+            zoomTip.style.display = 'block';
+            clearTimeout(showTipTimer);
+            showTipTimer = setTimeout(function () {
+                zoomTip.style.display = 'none';
+            }, 3500);
+        }
+    });
+
+    map.on('mouseout', function () {
+        map.scrollWheelZoom.disable();
+        zoomTip.style.display = 'none';
+    });
+
+    var baseMaps = {
+        'Спутник Esri': esri,
+        'Карта OSM': osm
+    };
+
+    L.control.layers(baseMaps, null, { position: 'bottomleft' }).addTo(map);
+
+    var drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+
+    var drawControl = new L.Control.Draw({
+        draw: {
+            polygon: true,
+            polyline: false,
+            marker: true,
+            circle: true,
+            rectangle: true
+        },
+        edit: {
+            featureGroup: drawnItems,
+            remove: true
+        }
+    });
+    map.addControl(drawControl);
+
+    var routeMarkers = [];
+    var markerId = 1;
+    var routingControl = null;
+
+    function refreshRouteSelectors() {
+        var selectFrom = document.getElementById('routeFrom');
+        var selectTo = document.getElementById('routeTo');
+
+        selectFrom.innerHTML = '';
+        selectTo.innerHTML = '';
+
+        routeMarkers.forEach(function (obj, i) {
+            selectFrom.innerHTML += '<option value="' + i + '">' + obj.label + '</option>';
+            selectTo.innerHTML += '<option value="' + i + '">' + obj.label + '</option>';
+        });
+    }
+
+    document.getElementById('buildRoute').onclick = function () {
+        if (routingControl) {
+            map.removeControl(routingControl);
+        }
+
+        var iFrom = +document.getElementById('routeFrom').value;
+        var iTo = +document.getElementById('routeTo').value;
+
+        if (isNaN(iFrom) || isNaN(iTo) || iFrom === iTo) {
+            alert('Выберите разные точки!');
+            return;
+        }
+
+        var wp = [
+            routeMarkers[iFrom].marker.getLatLng(),
+            routeMarkers[iTo].marker.getLatLng()
+        ];
+
+        routingControl = L.Routing.control({
+            waypoints: wp,
+            lineOptions: {
+                styles: [{ color: '#A00006', weight: 5 }]
+            },
+            router: L.Routing.osrmv1({
+                serviceUrl: 'https://router.project-osrm.org/route/v1'
+            }),
+            language: 'ru',
+            draggableWaypoints: true,
+            routeWhileDragging: true
+        }).addTo(map);
+    };
+
+    document.getElementById('clearRoute').onclick = function () {
+        if (routingControl) {
+            map.removeControl(routingControl);
+            routingControl = null;
+        }
+
+        routeMarkers.forEach(function (obj) {
+            map.removeLayer(obj.marker);
+        });
+
+        routeMarkers = [];
+        refreshRouteSelectors();
+    };
+
+    function addMarkerForRouting(latlng) {
+        var label = 'Точка ' + markerId++;
+        var marker = L.marker(latlng, {
+            draggable: true,
+            title: label
+        }).addTo(map);
+
+        marker.bindTooltip(label, {
+            permanent: true,
+            direction: 'right'
+        }).openTooltip();
+
+        routeMarkers.push({
+            marker: marker,
+            label: label
+        });
+
+        refreshRouteSelectors();
+
+        marker.on('remove', refreshRouteSelectors);
+        marker.on('move', function () {
+            if (routingControl) {
+                refreshRouteSelectors();
+            }
+        });
+
+        return marker;
+    }
+
+    map.on('draw:created', function (e) {
+        var layer = e.layer;
+
+        if (layer instanceof L.Marker) {
+            addMarkerForRouting(layer.getLatLng());
+        }
+
+        if (layer instanceof L.Polygon && !(layer instanceof L.Rectangle)) {
+            var polygonArea = L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]);
+            layer.bindPopup('Площадь: ' + polygonArea.toFixed(2) + ' м²');
+        }
+
+        if (layer instanceof L.Rectangle) {
+            var rectangleArea = L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]);
+            layer.bindPopup('Площадь прямоугольника: ' + rectangleArea.toFixed(2) + ' м²');
+        }
+
+        if (layer instanceof L.Circle) {
+            var circleArea = Math.PI * Math.pow(layer.getRadius(), 2);
+            layer.bindPopup('Площадь круга: ' + circleArea.toFixed(2) + ' м²');
+        }
+
+        drawnItems.addLayer(layer);
+        if (layer.openPopup) {
+            layer.openPopup();
+        }
+    });
+
+    fetch('https://aleksandrvnikolaev-22756.bubbleapps.io/api/1.1/obj/plot')
+        .then(function (res) {
+            return res.json();
+        })
+        .then(function (data) {
+            var bounds = [];
+
+            data.response.results.forEach(function (item) {
+                if (!item.geojson) return;
+
+                var geo;
+                try {
+                    geo = JSON.parse(item.geojson);
+                } catch (e) {
+                    geo = undefined;
+                }
+
+                if (!geo) return;
+
+                var layer = L.geoJSON(geo, {
+                    style: {
+                        fillColor: '#800020',
+                        weight: 2,
+                        opacity: 0.8,
+                        color: '#3c0012',
+                        fillOpacity: 0.2
+                    },
+                    onEachFeature: function (feature, layer) {
+                        if (!feature.properties) return;
+
+                        var props = feature.properties;
+                        var txt = `
+                            <b>Кадастровый номер:</b> ${props.cadnum || ''}<br>
+                            <b>Кадастровый квартал:</b> ${props.quarter || ''}<br>
+                            <b>Адрес:</b> ${props.address || ''}<br>
+                            <b>Площадь:</b> ${props.area || ''}<br>
+                            <b>Категория:</b> ${props.category || ''}<br>
+                            <b>Собственность:</b> ${props.ownership || ''}<br>
+                            <b>Тип права:</b> ${props.right_type || ''}<br>
+                            <b>Кадастровая стоимость:</b> ${props.cost || ''}<br>
+                            <b>Статус:</b> ${props.status || ''}<br>
+                            <b>Дата регистрации:</b> ${props.date_reg || ''}<br>
+                            <b>Зарегистрированная площадь:</b> ${props.declared_area || ''}<br>
+                            <b>Дата регистрации стоимости:</b> ${props.cost_registration_date || ''}<br>
+                            <b>Тип:</b> ${props.type || ''}<br>
+                            <b>Разрешенное использование:</b> ${props.alloweduse || ''}<br>
+                            <b>Ограничения:</b> ${props.limitations || ''}<br>
+                            <b>Документ:</b> ${props.document || ''}<br>
+                            <b>Дата обновления:</b> ${props.updated_at || ''}<br>
+                        `;
+                        layer.bindPopup(txt);
+                    }
+                }).addTo(map);
+
+                var layerBounds = layer.getBounds();
+                if (layerBounds.isValid()) {
+                    bounds.push(layerBounds);
+                }
+            });
+
+            if (bounds.length > 0) {
+                var union = bounds[0];
+                for (var i = 1; i < bounds.length; i++) {
+                    union.extend(bounds[i]);
+                }
+                map.fitBounds(union);
+            }
+        });
+
+    refreshRouteSelectors();
+});
+</script>
+</body>
+</html>
